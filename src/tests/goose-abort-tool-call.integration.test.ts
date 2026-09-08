@@ -6,10 +6,12 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { createAnthropicMock } from "../create-mock";
 import {
+  commandInstalled,
   createScratch,
   GOOSE_TIMEOUT_MS,
   gooseInstalled,
   gooseOutput,
+  isMainRequest,
   runGoose,
   type Scratch,
   startMock,
@@ -19,23 +21,24 @@ import {
 } from "./goose-helpers";
 
 // Reproduces aaif-goose/goose#11909: a headless `goose run` aborted during a
-// tool call (1) loses the entire in-flight round — the assistant message and
-// its toolRequest are only persisted at iteration end, after all tools finish
-// — and (2) still reports success, because the CLI's cancel/error arms print
-// to the terminal and return Ok, so log_session_completion logs
-// exit_type "normal" and the process exits 0.
+// tool call (1) loses the in-flight round — the assistant message and its
+// toolRequest are only persisted at iteration end, once all tools finish —
+// and (2) still reports success — the CLI's cancel arm prints to the terminal
+// and returns Ok, so exit_type is logged "normal" and the process exits 0.
 //
-// The mock scripts one Anthropic round whose reply is a tool_use block for
-// the developer extension's shell tool running `sleep 30`. Once goose's own
-// log records "Tool call started" for that round, the test sends SIGINT and
-// inspects the exit code, the completion log line, and the scratch sessions
-// database. Every assertion marked BUG captures the defective behaviour and
-// must be inverted once goose persists the round write-ahead and reports
-// aborted headless runs honestly.
+// The mock scripts one Anthropic round whose reply is a shell tool_use that
+// sleeps long enough for SIGINT to land mid-call. Once goose's log records
+// "Tool call started" for that round, the test aborts and inspects the exit
+// code, the completion log line, and the scratch sessions database.
+// Assertions marked BUG capture the defective behaviour and must be inverted
+// once goose persists rounds write-ahead and reports aborted runs honestly.
 
 // Long enough that the tool is still running when SIGINT lands; short
 // enough that an unnoticed early exit fails the test fast.
 const TOOL_SLEEP_SECS = 30;
+
+// The command the scripted tool round tells goose to execute.
+const TOOL_COMMAND = `sleep ${TOOL_SLEEP_SECS}`;
 
 // Grace period for goose startup plus the scripted LLM round.
 const TOOL_START_TIMEOUT_MS = 45_000;
@@ -49,9 +52,8 @@ const LOG_POLL_INTERVAL_MS = 200;
 const TOOL_REQUEST_ID = "toolu_mock_11909";
 const MESSAGE_ID = "msg_mock_11909";
 
-// The DB assertions shell out to the sqlite3 CLI; skip when it is absent.
-const sqlite3Installed =
-  execSync("command -v sqlite3 || true").toString().trim().length > 0;
+// The DB assertions shell out to the sqlite3 CLI.
+const sqlite3Installed = commandInstalled("sqlite3");
 
 const delay = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
@@ -133,9 +135,7 @@ const toolUseStream = (): string =>
       index: 0,
       delta: {
         type: "input_json_delta",
-        partial_json: JSON.stringify({
-          command: `sleep ${TOOL_SLEEP_SECS}`,
-        }),
+        partial_json: JSON.stringify({ command: TOOL_COMMAND }),
       },
     }),
     sseFrame("content_block_stop", { type: "content_block_stop", index: 0 }),
@@ -155,15 +155,13 @@ const serveToolRoundOnFirstMainRequest = (app: FastifyInstance): void => {
     if (request.method !== "POST" || request.url !== "/v1/messages") return;
     if (served) return;
     const body = (request.body ?? {}) as {
-      system?: unknown;
       stream?: boolean;
+      system?: unknown;
     };
-    const system =
-      typeof body.system === "string"
-        ? body.system
-        : JSON.stringify(body.system ?? "");
-    if (system.includes("title")) return;
+    if (!isMainRequest(body.system)) return;
     served = true;
+    // The same round as plain JSON, in case goose asks for a non-streaming
+    // reply.
     if (body.stream === false) {
       await reply.code(200).send({
         id: MESSAGE_ID,
@@ -175,7 +173,7 @@ const serveToolRoundOnFirstMainRequest = (app: FastifyInstance): void => {
             type: "tool_use",
             id: TOOL_REQUEST_ID,
             name: "shell",
-            input: { command: `sleep ${TOOL_SLEEP_SECS}` },
+            input: { command: TOOL_COMMAND },
           },
         ],
         stop_reason: "tool_use",
@@ -213,7 +211,7 @@ describe.skipIf(!gooseInstalled || !sqlite3Installed)(
           scratch,
           "anthropic",
           url,
-          `Use the shell tool to run exactly: sleep ${TOOL_SLEEP_SECS} && echo done. Then report the output.`,
+          `Use the shell tool to run exactly: ${TOOL_COMMAND} && echo done. Then report the output.`,
           GOOSE_TIMEOUT_MS,
           { persistSession: true, withBuiltins: ["developer"] },
         );
@@ -254,12 +252,11 @@ describe.skipIf(!gooseInstalled || !sqlite3Installed)(
         // so a run killed mid-task is recorded as "normal".
         expect(completionLine).toContain('"exit_type":"normal"');
 
-        // BUG (goose#11909, defect 1): the round that produced the tool call
-        // was never persisted. The session ends on the kickoff user turn
-        // only; the assistant toolRequest, its toolResponse, and the round's
-        // usage are all absent even though the LLM call and the shell
-        // execution really happened. A fixed goose that persists write-ahead
-        // would leave an assistant row here.
+        // BUG (goose#11909, defect 1): the aborted round was never
+        // persisted — no assistant toolRequest, no toolResponse, no usage
+        // rows, even though the LLM call and the shell execution really
+        // happened; the session ends on the kickoff user turn alone. A
+        // write-ahead goose would leave an assistant row here.
         expect(
           querySessionDb(
             scratch,

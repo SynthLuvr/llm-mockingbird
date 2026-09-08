@@ -9,14 +9,16 @@ import type { FastifyInstance } from "fastify";
 type GooseProvider = "anthropic" | "openai";
 
 // Synchronous so describe.skipIf can branch at import time.
-const gooseInstalled = (() => {
+const commandInstalled = (command: string): boolean => {
   try {
-    execSync("command -v goose", { stdio: "ignore" });
+    execSync(`command -v ${command}`, { stdio: "ignore" });
     return true;
   } catch {
     return false;
   }
-})();
+};
+
+const gooseInstalled = commandInstalled("goose");
 
 // Isolates every XDG directory goose consults so the test never reads or
 // mutates the user's real ~/.config/goose.
@@ -67,11 +69,9 @@ const providerEnv = (
 };
 
 type RunGooseOptions = {
-  // Omit --no-session so the run persists into the scratch sessions.db
-  // (needed by tests that inspect goose's session database).
+  // Omit --no-session so the run persists into the scratch sessions.db.
   readonly persistSession?: boolean;
-  // Appends one --with-builtin flag per entry (e.g. "developer" for the
-  // shell tool).
+  // One --with-builtin flag per entry (e.g. "developer" for the shell tool).
   readonly withBuiltins?: readonly string[];
 };
 
@@ -170,13 +170,15 @@ const teardown = async (
   rmSync(scratch.root, { recursive: true, force: true });
 };
 
-export type { RunGooseOptions, Scratch };
+export type { Scratch };
 export {
   asText,
+  commandInstalled,
   createScratch,
   GOOSE_TIMEOUT_MS,
   gooseInstalled,
   gooseOutput,
+  isMainRequest,
   MAX_STREAMING_REQUESTS,
   runGoose,
   startMock,
