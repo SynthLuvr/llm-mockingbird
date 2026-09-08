@@ -9,14 +9,16 @@ import type { FastifyInstance } from "fastify";
 type GooseProvider = "anthropic" | "openai";
 
 // Synchronous so describe.skipIf can branch at import time.
-const gooseInstalled = (() => {
+const commandInstalled = (command: string): boolean => {
   try {
-    execSync("command -v goose", { stdio: "ignore" });
+    execSync(`command -v ${command}`, { stdio: "ignore" });
     return true;
   } catch {
     return false;
   }
-})();
+};
+
+const gooseInstalled = commandInstalled("goose");
 
 // Isolates every XDG directory goose consults so the test never reads or
 // mutates the user's real ~/.config/goose.
@@ -66,14 +68,26 @@ const providerEnv = (
   };
 };
 
+type RunGooseOptions = {
+  // Omit --no-session so the run persists into the scratch sessions.db.
+  readonly persistSession?: boolean;
+  // One --with-builtin flag per entry (e.g. "developer" for the shell tool).
+  readonly withBuiltins?: readonly string[];
+};
+
 const runGoose = (
   scratch: Scratch,
   provider: GooseProvider,
   mockUrl: string,
   prompt: string,
   timeoutMs = 60000,
-): ReturnType<typeof execa> =>
-  execa("goose", ["run", "-t", prompt, "--no-session"], {
+  options: RunGooseOptions = {},
+): ReturnType<typeof execa> => {
+  const args = ["run", "-t", prompt];
+  if (!options.persistSession) args.push("--no-session");
+  for (const builtin of options.withBuiltins ?? [])
+    args.push("--with-builtin", builtin);
+  return execa("goose", args, {
     cwd: scratch.root,
     reject: false,
     timeout: timeoutMs,
@@ -86,6 +100,7 @@ const runGoose = (
       GOOSE_TELEMETRY_ENABLED: "false",
     },
   });
+};
 
 // execa widens stdout/stderr to a union for non-default encodings; under the
 // default utf8 encoding they are always strings.
@@ -158,10 +173,12 @@ const teardown = async (
 export type { Scratch };
 export {
   asText,
+  commandInstalled,
   createScratch,
   GOOSE_TIMEOUT_MS,
   gooseInstalled,
   gooseOutput,
+  isMainRequest,
   MAX_STREAMING_REQUESTS,
   runGoose,
   startMock,
