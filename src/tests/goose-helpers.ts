@@ -66,14 +66,28 @@ const providerEnv = (
   };
 };
 
+type RunGooseOptions = {
+  // Omit --no-session so the run persists into the scratch sessions.db
+  // (needed by tests that inspect goose's session database).
+  readonly persistSession?: boolean;
+  // Appends one --with-builtin flag per entry (e.g. "developer" for the
+  // shell tool).
+  readonly withBuiltins?: readonly string[];
+};
+
 const runGoose = (
   scratch: Scratch,
   provider: GooseProvider,
   mockUrl: string,
   prompt: string,
   timeoutMs = 60000,
-): ReturnType<typeof execa> =>
-  execa("goose", ["run", "-t", prompt, "--no-session"], {
+  options: RunGooseOptions = {},
+): ReturnType<typeof execa> => {
+  const args = ["run", "-t", prompt];
+  if (!options.persistSession) args.push("--no-session");
+  for (const builtin of options.withBuiltins ?? [])
+    args.push("--with-builtin", builtin);
+  return execa("goose", args, {
     cwd: scratch.root,
     reject: false,
     timeout: timeoutMs,
@@ -86,6 +100,7 @@ const runGoose = (
       GOOSE_TELEMETRY_ENABLED: "false",
     },
   });
+};
 
 // execa widens stdout/stderr to a union for non-default encodings; under the
 // default utf8 encoding they are always strings.
@@ -155,7 +170,7 @@ const teardown = async (
   rmSync(scratch.root, { recursive: true, force: true });
 };
 
-export type { Scratch };
+export type { RunGooseOptions, Scratch };
 export {
   asText,
   createScratch,
