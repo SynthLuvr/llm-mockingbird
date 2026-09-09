@@ -34,6 +34,15 @@ type MockOptions = {
   // default: "Overloaded"; OpenAI default: "The server had an error while
   // processing your request. Sorry about that!".
   readonly streamSseErrorMessage?: string;
+  // When set, streams opening frames and deltas for this many milliseconds,
+  // then stalls: the stream stays open indefinitely with no closing frames
+  // and no error — a provider that wedged mid-stream, leaving the client
+  // waiting on a response that never arrives and never fails.
+  readonly streamStallAfterMs?: number;
+  // How often to emit `: ping` comment lines while stalled: frames every
+  // SSE parser ignores, so clients see silence while bytes keep arriving
+  // and read timeouts never fire. Defaults to 500ms; 0 for full silence.
+  readonly streamStallKeepaliveMs?: number;
   // Config-driven behavior (ADR 0008): the first rule matching a completion
   // request supplies its reply or fault, replacing the canned response.
   readonly rules?: readonly MockRule[];
