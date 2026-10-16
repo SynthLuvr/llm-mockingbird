@@ -72,7 +72,8 @@ declaratively.
   headers, and stream flag; guard on captured variables; step through
   reply sequences; and inject faults (`status` errors with
   provider-shaped bodies and `retry-after`, malformed JSON, bounded
-  timeouts, fixed delays) — all declaratively, per rule
+  timeouts, thinking-only responses, fixed delays) — all declaratively,
+  per rule
 - **In-process** testing via Fastify’s `inject()` (no port needed)
 - **Standalone** server mode for end-to-end runs and for pointing a real
   client at `ANTHROPIC_HOST` / `OPENAI_HOST`
@@ -320,6 +321,7 @@ const openai = createOpenAIMock({
 | `errorType` / `errorMessage` | `string` | Override the mapped error type / default message |
 | `malformedJson` | `boolean` | `200` with the truncated body `{"not":"closed"` — valid headers, unparsable payload |
 | `timeoutAfterMs` | `number` | Hangs boundedly for this many milliseconds, then destroys the socket (llm-mock’s `TIMEOUT`, adapted so tests terminate) |
+| `thinkingOnly` | `string` | Streams a response whose only content is a signed thinking/reasoning block with this text — no answer, no tool call, normal end of stream (reproduces [goose#11975](https://github.com/aaif-goose/goose/issues/11975)’s silent turn end) |
 | `delayMs` | `number` | Fixed delay before the response — fault or reply |
 
 A matched rule’s reply replaces the canned text: streamed requests carry
@@ -327,7 +329,10 @@ it across the usual delta frames, OpenAI non-streaming requests return
 it as the `chat.completion` content. Fault outcomes (`status`,
 `malformedJson`, `timeoutAfterMs`) answer before any stream starts. A
 rule with neither `reply` nor `sequence` and no fault is invalid; a
-`delayMs`-only rule delays the fallback reply.
+`delayMs`-only rule delays the fallback reply. A `thinkingOnly` rule
+streams reasoning deltas (Anthropic `thinking_delta` +
+`signature_delta`, OpenAI `reasoning_content`) in place of the reply —
+on current goose the turn then ends in silence.
 
 ### Rules from a file (standalone server)
 

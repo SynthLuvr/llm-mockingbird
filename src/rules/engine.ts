@@ -123,6 +123,7 @@ const createRuleEngine = (
         errorMessage: rule.errorMessage,
         malformedJson: rule.malformedJson,
         timeoutAfterMs: rule.timeoutAfterMs,
+        thinkingOnly: rule.thinkingOnly,
         delayMs: rule.delayMs,
       };
     }

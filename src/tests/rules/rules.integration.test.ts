@@ -443,6 +443,83 @@ describe("rule faults (integration)", () => {
   });
 });
 
+describe("thinkingOnly fault (integration)", () => {
+  // The default 16-char chunking splits the reasoning across deltas; a
+  // single delta keeps the assertions on joined text simple.
+  const CHUNK_SIZE = 200;
+  const THINKING = "Let me work through this step by step.";
+
+  it("streams a signed thinking block and no text on anthropic", async () => {
+    const server = await startTestServer({
+      streamChunkSize: CHUNK_SIZE,
+      rules: [{ when: {}, thinkingOnly: THINKING }],
+    });
+    try {
+      const response = await postMessages(server.url, [
+        { role: "user", content: "hi" },
+      ]);
+      expect(response.status).toBe(200);
+      const body = await response.text();
+      expect(body).toContain(
+        '"content_block":{"type":"thinking","thinking":""}',
+      );
+      expect(body).toContain(`"thinking_delta","thinking":"${THINKING}"`);
+      expect(body).toContain('"signature_delta","signature":"');
+      expect(body).toContain('"stop_reason":"end_turn"');
+      expect(body).not.toContain('"type":"text_delta"');
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("streams reasoning_content deltas and no content on openai", async () => {
+    const server = await startOpenAITestServer({
+      streamChunkSize: CHUNK_SIZE,
+      rules: [{ when: {}, thinkingOnly: THINKING }],
+    });
+    try {
+      const response = await postCompletion(
+        server.url,
+        [{ role: "user", content: "hi" }],
+        true,
+      );
+      expect(response.status).toBe(200);
+      const body = await response.text();
+      expect(body).toContain(`"reasoning_content":"${THINKING}"`);
+      expect(body).toContain('"finish_reason":"stop"');
+      expect(body).not.toContain('"content":"');
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("serves a reasoning-only message non-streaming on openai", async () => {
+    const server = await startOpenAITestServer({
+      rules: [{ when: {}, thinkingOnly: THINKING }],
+    });
+    try {
+      const response = await postCompletion(server.url, [
+        { role: "user", content: "hi" },
+      ]);
+      expect(response.status).toBe(200);
+      const parsed = (await response.json()) as {
+        choices: readonly {
+          finish_reason: string;
+          message: {
+            content: string | null;
+            reasoning_content?: string;
+          };
+        }[];
+      };
+      expect(parsed.choices[0].finish_reason).toBe("stop");
+      expect(parsed.choices[0].message.content).toBeNull();
+      expect(parsed.choices[0].message.reasoning_content).toBe(THINKING);
+    } finally {
+      await server.close();
+    }
+  });
+});
+
 describe("LLM_MOCKINGBIRD_RULES standalone server (integration)", () => {
   type MockChild = ChildProcessByStdio<null, Readable, Readable>;
 
