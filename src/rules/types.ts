@@ -59,6 +59,10 @@ type MockRule = {
   // llm-mock's TIMEOUT (which never responds), the hang is bounded so tests
   // terminate.
   readonly timeoutAfterMs?: number;
+  // Streams a response whose only content is a signed thinking block with
+  // this text — no answer text, no tool call, normal end of stream: the
+  // provider half of goose#11975's silent turn end.
+  readonly thinkingOnly?: string;
   // Fixed delay before the response (fault or reply).
   readonly delayMs?: number;
 };
@@ -73,6 +77,7 @@ type RuleOutcome = {
   readonly errorMessage?: string;
   readonly malformedJson?: boolean;
   readonly timeoutAfterMs?: number;
+  readonly thinkingOnly?: string;
   readonly delayMs?: number;
 };
 

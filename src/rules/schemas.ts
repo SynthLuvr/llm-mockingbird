@@ -24,6 +24,7 @@ const hasOutcome = (
     | "status"
     | "malformedJson"
     | "timeoutAfterMs"
+    | "thinkingOnly"
     | "delayMs"
   >,
 ): boolean =>
@@ -32,6 +33,7 @@ const hasOutcome = (
   rule.status !== undefined ||
   rule.malformedJson === true ||
   rule.timeoutAfterMs !== undefined ||
+  rule.thinkingOnly !== undefined ||
   rule.delayMs !== undefined;
 
 const ruleGuard = type({
@@ -65,6 +67,7 @@ const mockRuleSchema = type({
   "errorMessage?": "string",
   "malformedJson?": "boolean",
   "timeoutAfterMs?": "number >= 0",
+  "thinkingOnly?": "string",
   "delayMs?": "number >= 0",
 })
   .onUndeclaredKey("reject")

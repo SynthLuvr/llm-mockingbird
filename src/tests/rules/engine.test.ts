@@ -249,6 +249,24 @@ describe("fault outcomes (unit)", () => {
       errorMessage: "slow down",
       malformedJson: undefined,
       timeoutAfterMs: undefined,
+      thinkingOnly: undefined,
+      delayMs: undefined,
+    });
+  });
+
+  it("carries thinkingOnly with no reply", () => {
+    const engine = createRuleEngine([
+      { when: {}, thinkingOnly: "Let me work through this." },
+    ])!;
+    expect(engine.match(context())).toEqual({
+      reply: undefined,
+      status: undefined,
+      retryAfterSec: undefined,
+      errorType: undefined,
+      errorMessage: undefined,
+      malformedJson: undefined,
+      timeoutAfterMs: undefined,
+      thinkingOnly: "Let me work through this.",
       delayMs: undefined,
     });
   });

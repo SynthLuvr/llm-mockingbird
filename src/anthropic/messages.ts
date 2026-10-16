@@ -66,6 +66,35 @@ const contentBlockStopEvent = (): SseEvent => ({
   data: { type: "content_block_stop", index: 0 },
 });
 
+// Thinking-block frames for the thinkingOnly fault: a signed reasoning
+// block with no answer content (goose#11975).
+const thinkingBlockStartEvent = (): SseEvent => ({
+  event: "content_block_start",
+  data: {
+    type: "content_block_start",
+    index: 0,
+    content_block: { type: "thinking", thinking: "" },
+  },
+});
+
+const thinkingDeltaEvent = (text: string): SseEvent => ({
+  event: "content_block_delta",
+  data: {
+    type: "content_block_delta",
+    index: 0,
+    delta: { type: "thinking_delta", thinking: text },
+  },
+});
+
+const signatureDeltaEvent = (signature: string): SseEvent => ({
+  event: "content_block_delta",
+  data: {
+    type: "content_block_delta",
+    index: 0,
+    delta: { type: "signature_delta", signature },
+  },
+});
+
 const messageDeltaEvent = (outputTokens: number): SseEvent => ({
   event: "message_delta",
   data: {
@@ -112,6 +141,33 @@ const openingEvents = (
   contentBlockStartEvent(),
 ];
 
+// Fixed so responses stay byte-for-byte deterministic, like every other
+// canned field; goose treats a signed thinking block as content either way.
+const MOCK_THINKING_SIGNATURE = "sig_llm_mockingbird_0000";
+
+const thinkingOpeningEvents = (
+  model: string,
+  inputTokens: number,
+): readonly SseEvent[] => [
+  messageStartEvent(model, inputTokens),
+  thinkingBlockStartEvent(),
+];
+
+const buildThinkingOnlyEvents = (
+  model: string,
+  chunks: readonly string[],
+  inputTokens: number,
+  outputTokens: number,
+): readonly SseEvent[] => [
+  messageStartEvent(model, inputTokens),
+  thinkingBlockStartEvent(),
+  ...chunks.map(thinkingDeltaEvent),
+  signatureDeltaEvent(MOCK_THINKING_SIGNATURE),
+  contentBlockStopEvent(),
+  messageDeltaEvent(outputTokens),
+  messageStopEvent(),
+];
+
 const registerAnthropicMessagesRoute = (
   app: FastifyInstance,
   options: MockOptions,
@@ -134,6 +190,30 @@ const registerAnthropicMessagesRoute = (
       body.stream === true,
     );
     if (await applyFaults(reply, "anthropic", outcome)) return;
+
+    // A thinking-only rule streams a signed reasoning block and no answer:
+    // the provider half of goose#11975's silent turn end.
+    if (outcome?.thinkingOnly !== undefined) {
+      const thinkingChunks = splitText(outcome.thinkingOnly, chunkSize);
+      await streamReply(reply, {
+        events: buildThinkingOnlyEvents(
+          model,
+          thinkingChunks,
+          inputTokens,
+          outputTokens,
+        ),
+        opening: thinkingOpeningEvents(model, inputTokens),
+        deltaEvent: thinkingDeltaEvent,
+        errorEvent: sseErrorEvent(
+          options.streamSseErrorType ?? DEFAULT_SSE_ERROR_TYPE,
+          options.streamSseErrorMessage ?? DEFAULT_SSE_ERROR_MESSAGE,
+        ),
+        chunks: thinkingChunks,
+        delayMs: chunkDelayMs,
+        errorMode: resolveErrorMode(options),
+      });
+      return;
+    }
 
     // A matched rule's reply replaces the canned chunks; fault-only rules
     // fall back to them.

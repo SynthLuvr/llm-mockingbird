@@ -66,6 +66,14 @@ const contentChunk = (meta: ChunkMeta, text: string): SseEvent =>
 const stopChunk = (meta: ChunkMeta): SseEvent =>
   chunkEnvelope(meta, {}, "stop");
 
+// Reasoning-only chunks for the thinkingOnly fault: reasoning_content
+// deltas with no answer content (goose#11975).
+const reasoningRoleChunk = (meta: ChunkMeta): SseEvent =>
+  chunkEnvelope(meta, { role: "assistant", reasoning_content: "" }, null);
+
+const reasoningChunk = (meta: ChunkMeta, text: string): SseEvent =>
+  chunkEnvelope(meta, { reasoning_content: text }, null);
+
 // The structured error object the real API delivers — as a mid-stream
 // `data:` frame after a 200, or as the body of an HTTP error response.
 const openAIError = (errorType: string, errorMessage: string) => ({
@@ -85,6 +93,15 @@ const buildStreamEvents = (
   stopChunk(meta),
 ];
 
+const buildThinkingOnlyStreamEvents = (
+  meta: ChunkMeta,
+  chunks: readonly string[],
+): readonly SseEvent[] => [
+  reasoningRoleChunk(meta),
+  ...chunks.map((text) => reasoningChunk(meta, text)),
+  stopChunk(meta),
+];
+
 const chatCompletionBody = (
   meta: ChunkMeta,
   text: string,
@@ -100,6 +117,39 @@ const chatCompletionBody = (
     {
       index: 0,
       message: { role: "assistant", content: text },
+      logprobs: null,
+      finish_reason: "stop",
+    },
+  ],
+  usage: {
+    prompt_tokens: inputTokens,
+    completion_tokens: outputTokens,
+    total_tokens: inputTokens + outputTokens,
+  },
+});
+
+// Non-streaming thinking-only completion: the reasoning lands on
+// reasoning_content with a null content — the shape DeepSeek-style APIs
+// return for a reasoning-only turn (goose#11975).
+const thinkingChatCompletionBody = (
+  meta: ChunkMeta,
+  thinking: string,
+  inputTokens: number,
+  outputTokens: number,
+) => ({
+  id: meta.id,
+  object: "chat.completion",
+  created: meta.created,
+  model: meta.model,
+  system_fingerprint: meta.fingerprint,
+  choices: [
+    {
+      index: 0,
+      message: {
+        role: "assistant",
+        content: null,
+        reasoning_content: thinking,
+      },
       logprobs: null,
       finish_reason: "stop",
     },
@@ -143,6 +193,32 @@ const registerOpenAIChatCompletionsRoute = (
       body.stream === true,
     );
     if (await applyFaults(reply, "openai", outcome)) return;
+
+    // A thinking-only rule streams reasoning deltas with no answer text:
+    // the provider half of goose#11975's silent turn end.
+    if (outcome?.thinkingOnly !== undefined) {
+      const thinkingChunks = splitText(outcome.thinkingOnly, chunkSize);
+      if (body.stream) {
+        await streamReply(reply, {
+          events: buildThinkingOnlyStreamEvents(meta, thinkingChunks),
+          opening: [reasoningRoleChunk(meta)],
+          deltaEvent: (chunk) => reasoningChunk(meta, chunk),
+          errorEvent,
+          chunks: thinkingChunks,
+          delayMs: chunkDelayMs,
+          errorMode,
+        });
+        return;
+      }
+      return reply.send(
+        thinkingChatCompletionBody(
+          meta,
+          outcome.thinkingOnly,
+          inputTokens,
+          outputTokens,
+        ),
+      );
+    }
 
     // A matched rule's reply replaces the canned text; fault-only rules
     // fall back to it.

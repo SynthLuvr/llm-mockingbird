@@ -45,6 +45,13 @@ describe("loadRulesFile (unit)", () => {
     ]);
   });
 
+  it("accepts a rule whose only outcome is thinkingOnly", () => {
+    const path = writeRules(
+      JSON.stringify([{ when: {}, thinkingOnly: "Hmm..." }]),
+    );
+    expect(loadRulesFile(path)).toEqual([{ when: {}, thinkingOnly: "Hmm..." }]);
+  });
+
   it("rejects invalid JSON, naming the file", () => {
     const path = writeRules("{not json");
     expect(() => loadRulesFile(path)).toThrow(/not valid JSON/);
